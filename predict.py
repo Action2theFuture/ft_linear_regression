@@ -1,13 +1,16 @@
-import json
-import os
+from numpy.testing import verbose
 import argparse
-from typing import Dict
+from model import TinyLinearRegression
 
+# --- Configuration & UI ---
 DEFAULT_MODEL_FILE = "model/data.json"
+BOLD = "\033[1m"
+CYAN = "\033[96m"
+RESET = "\033[0m"
 
 def parse_arguments():
     """Parses the model file path from the command line."""
-    parser = argparse.ArgumentParser(description="🚀 Predict car price based on a trained model.")
+    parser = argparse.ArgumentParser(description="🚀 Predict car price using a trained model.")
     parser.add_argument(
         "model_file", 
         nargs="?", 
@@ -15,34 +18,6 @@ def parse_arguments():
         help=f"Path to the trained JSON model (default: {DEFAULT_MODEL_FILE})"
     )
     return parser.parse_args()
-
-def load_model(filepath: str) -> Dict[str, float]:
-    """Loads the trained model parameters from a JSON file."""
-    fallback_model = {
-        "theta0": 0.0, 
-        "theta1": 0.0, 
-        "min_m": 0.0, 
-        "max_m": 1.0
-    }
-    
-    if not os.path.exists(filepath):
-        print(f"⚠️ Warning: '{filepath}' not found. Using default values (0).")
-        return fallback_model
-
-    try:
-        with open(filepath, 'r') as f:
-            model = json.load(f)
-            required_keys = ["theta0", "theta1", "min_m", "max_m"]
-            if all(key in model for key in required_keys):
-                print(f"✅ Model successfully loaded from '{filepath}'")
-                return model
-            else:
-                raise KeyError("Missing required parameters in JSON")
-
-    except (json.JSONDecodeError, KeyError, Exception) as e:
-        print(f"❌ Error: Model file is corrupted or invalid ({e}).")
-        print("   Falling back to default values (0).")
-        return fallback_model
 
 def get_user_mileage() -> float:
     """Prompts the user for mileage and validates the input."""
@@ -60,30 +35,30 @@ def get_user_mileage() -> float:
         except ValueError:
             print("❌ Error: Please enter a valid numerical value.")
 
-def predict_price(mileage: float, model: Dict[str, float]) -> float:
-    """Calculates the predicted price based on normalized mileage."""
-    denom = model['max_m'] - model['min_m']
-    norm_mileage = (mileage - model['min_m']) / denom if denom != 0 else 0.0
-    
-    # Prediction: y = theta0 + (theta1 * x_norm)
-    prediction = model['theta0'] + (model['theta1'] * norm_mileage)
-    
-    # Handle negative prices as 0
-    return max(0.0, prediction)
-
 def main():
+    """Main execution flow for prediction."""
     args = parse_arguments()
-    # 1. Load the model
-    model = load_model(args.model_file)
+    
+    # 1. Instantiate the model object
+    model = TinyLinearRegression()
+    
+    # 2. Load the model state
+    # The 'load' method inside the class handles the file opening and key checks
+    if model.load(args.model_file):
+        r2 = model.metrics.get('r2_score', 0.0)
+        print(f"✅ Model successfully loaded from '{args.model_file}' (R²: {r2:.4f})")
+    else:
+        print(f"⚠️ Warning: '{args.model_file}' not found or invalid. Using default values (0).")
 
-    # 2. Get user input
+    # 3. Get user input
     mileage = get_user_mileage()
 
-    # 3. Calculate prediction
-    estimated_price = predict_price(mileage, model)
+    # 4. Perform prediction using the class method
+    # The class knows how to normalize the mileage using its internal min_m/max_m
+    estimated_price = model.predict(mileage, verbose=True)
 
-    # 4. Output result
-    print(f"✨ Estimated price: [ {estimated_price:,.2f} ]")
+    # 5. Output result
+    print(f"✨ Estimated price: [ {BOLD}{estimated_price:,.2f}{RESET} ]")
 
 if __name__ == "__main__":
     main()

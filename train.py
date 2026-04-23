@@ -1,20 +1,23 @@
-import json
 import os
 import argparse
 import textwrap
 import numpy as np
 import matplotlib.pyplot as plt
 from typing import Tuple, List, Dict
+
+# Modular imports
+from model import TinyLinearRegression
 from preprocessing import csv_file_validator, load_csv, remove_outliers, normalize_features
 
-# --- Constants & Help Texts ---
+# --- UI & Configuration ---
 DATA_DIR = "data"
 MODEL_DIR = "model"
-DEFAULT_LEARNING_RATE = 0.1
+DEFAULT_LR = 0.1
 DEFAULT_EPOCHS = 1000
 TOLERANCE = 1e-7
-PLOT_FIG_SIZE = (12, 5)
+PLOT_SIZE = (12, 5)
 
+# ANSI Colors for terminal output
 YELLOW = "\033[93m"
 CYAN   = "\033[96m"
 GREEN  = "\033[92m"
@@ -22,61 +25,29 @@ RED    = "\033[91m"
 BOLD   = "\033[1m"
 RESET  = "\033[0m"
 
-HELP_DESCRIPTION = f"{BOLD}{CYAN}🚀 Linear Regression Training Tool for car price prediction.{RESET}"
+HELP_DESC = f"{BOLD}{CYAN}🚀 Linear Regression Training Tool for car price prediction.{RESET}"
 HELP_EPILOG = textwrap.dedent(f"""
-    {BOLD}{YELLOW}[ 💡 Hyperparameter & Preprocessing Guide ]{RESET}
-    {BOLD}- Learning Rate (--lr):{RESET}
-        * {GREEN}0.1{RESET}   : Standard default. Recommended for stable training.
-        * {RED}1.0+{RESET}   : Fast training, but risk of {RED}'nan'{RESET} (Gradient Explosion).
-
-    {BOLD}- Data Cleaning (--clean):{RESET}
-        * {CYAN}Enabled{RESET} : Removes outliers using the {BOLD}IQR (1.5x){RESET} method.
+    {BOLD}{YELLOW}[ 💡 Training Guide ]{RESET}
+    - {BOLD}Learning Rate (--lr):{RESET} Standard default is 0.1.
+    - {BOLD}Data Cleaning (--clean):{RESET} Removes outliers using IQR (1.5x).
+    - {BOLD}Early Stopping:{RESET} Automatically halts when cost stabilizes below {TOLERANCE}.
     """)
 
 def parse_arguments():
+    """Parses CLI arguments."""
     parser = argparse.ArgumentParser(
-        description=HELP_DESCRIPTION,
+        description=HELP_DESC,
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=HELP_EPILOG
     )
-    # Use the validator from preprocessing module
     parser.add_argument("filename", type=csv_file_validator, help="Target CSV file name")
-    parser.add_argument("--lr", type=float, default=DEFAULT_LEARNING_RATE, help="Learning rate")
-    parser.add_argument("--epochs", type=int, default=DEFAULT_EPOCHS, help="Max epochs")
-    parser.add_argument("--clean", action="store_true", help="Remove outliers before training")
+    parser.add_argument("--lr", type=float, default=DEFAULT_LR, help="Learning rate")
+    parser.add_argument("--epochs", type=int, default=DEFAULT_EPOCHS, help="Max iterations")
+    parser.add_argument("--clean", action="store_true", help="Enable outlier removal")
     return parser.parse_args()
 
-def train_model(x_norm: np.ndarray, y: np.ndarray, lr: float, epochs: int) -> Tuple[float, float, List[float]]:
-    """Performs Gradient Descent to find optimal theta0 and theta1."""
-    t0, t1 = 0.0, 0.0
-    m = len(x_norm)
-    cost_history = []
-
-    for epoch in range(epochs):
-        predictions = t0 + (t1 * x_norm)
-        errors = predictions - y
-        
-        t0 -= lr * (1/m) * np.sum(errors)
-        t1 -= lr * (1/m) * np.sum(errors * x_norm)
-        
-        cost = np.sum(errors**2) / (2 * m)
-
-        if np.isinf(cost) or np.isnan(cost):
-            print(f"\n{RED}❌ Error: Model diverged. Lower your learning rate.{RESET}")
-            return t0, t1, cost_history
-
-        if epoch > 0 and abs(cost_history[-1] - cost) < TOLERANCE:
-            print(f"{GREEN}✨ Early stopping at epoch {epoch} (Converged).{RESET}")
-            break
-            
-        cost_history.append(cost)
-        if epoch % 100 == 0:
-            print(f"Epoch {epoch:4d}: Cost = {cost:.2f}")
-            
-    return t0, t1, cost_history
-
-def calculate_metrics(y_true, y_pred):
-    """Calculates R2, MAE, and RMSE scores."""
+def calculate_metrics(y_true: np.ndarray, y_pred: np.ndarray) -> Dict[str, float]:
+    """Calculates model performance: $R^2$, MAE, and RMSE."""
     ss_res = np.sum((y_true - y_pred)**2)
     ss_tot = np.sum((y_true - np.mean(y_true))**2)
     r2 = 1 - (ss_res / ss_tot) if ss_tot != 0 else 0.0
@@ -84,122 +55,86 @@ def calculate_metrics(y_true, y_pred):
     rmse = np.sqrt(np.mean((y_true - y_pred)**2))
     return {"r2_score": r2, "mae": mae, "rmse": rmse}
 
-def validate_and_save(params: Dict, filepath: str) -> bool:
-    """Validates the model parameters against domain rules and saves to JSON."""
+def validate_and_save(model: TinyLinearRegression, filepath: str) -> bool:
+    """Checks if the trained model makes sense before saving to JSON."""
     warnings = []
+    r2 = model.metrics.get('r2_score', 0.0)
     
-    # Extract metrics and parameters for validation
-    r2 = params.get('metrics', {}).get('r2_score', 0.0)
-    theta1 = params.get('theta1', 0.0)
-
-    # Rule 1: Car prices should generally decrease as mileage increases (Negative Correlation)
-    if theta1 >= 0:
-        warnings.append(f"{RED}{BOLD}- Abnormal trend:{RESET} Price increases with mileage (theta1 >= 0).")
-    
-    # Rule 2: Check if the model's reliability is high enough
+    if model.theta1 >= 0:
+        warnings.append(rf"{RED}{BOLD}- Abnormal trend:{RESET} Price increases with mileage ($\theta_1 \ge 0$).")
     if r2 < 0.4:
-        warnings.append(f"{YELLOW}- Low reliability:{RESET} R² Score is below 0.4 ({r2:.4f}).")
+        warnings.append(f"{YELLOW}- Low reliability:{RESET} $R^2$ Score is below 0.4 ({r2:.4f}).")
 
-    # If issues are found, ask for user confirmation
     if warnings:
         print(f"\n{YELLOW}⚠️  [Warning] Model validation issues found:{RESET}")
-        for w in warnings:
-            print(w)
+        for w in warnings: print(w)
         
         while True:
             choice = input(f"\n👉 Force save this model to '{filepath}'? (y/n): ").lower().strip()
-            if choice == 'y':
-                break
-            elif choice == 'n':
-                print(f"{RED}🚫 Saving canceled by user.{RESET}")
-                return False
-            else:
-                print("❌ Invalid input. Please enter 'y' or 'n'.")
+            if choice == 'y': break
+            elif choice == 'n': return False
+            else: print("❌ Invalid input. Enter 'y' or 'n'.")
 
-    # Final saving process
-    try:
-        with open(filepath, 'w') as f:
-            json.dump(params, f, indent=4)
-        print(f"✅ Model successfully saved at: {BOLD}{filepath}{RESET}")
-        return True
-    except Exception as e:
-        print(f"{RED}❌ Error: Failed to save the model file ({e}).{RESET}")
-        return False
+    # Call the internal class save method
+    model.save(filepath)
+    return True
 
-def show_plots(m_raw: np.ndarray, prices: np.ndarray, t0: float, t1: float, 
-               history: List[float], min_m: float, max_m: float):
-    """
-    Visualizes the regression result and the learning curve.
-    """
-    plt.figure(figsize=PLOT_FIG_SIZE)
+def show_results(raw_x: np.ndarray, raw_y: np.ndarray, model: TinyLinearRegression, history: List[float]):
+    """Visualizes the final regression line and the training cost history."""
+    plt.figure(figsize=PLOT_SIZE)
 
-    # Plot 1: Regression Line vs. Data Points
+    # Subplot 1: Regression Result
     plt.subplot(1, 2, 1)
-    plt.scatter(m_raw, prices, color='blue', alpha=0.5, label='Actual Data')
+    plt.scatter(raw_x, raw_y, color='blue', alpha=0.5, label='Actual Data')
     
-    # Generate points for the regression line
-    x_range = np.linspace(min_m, max_m, 100)
-    # Important: We must normalize these points using the same logic as training
-    x_norm = (x_range - min_m) / (max_m - min_m if max_m != min_m else 1.0)
-    y_pred = t0 + (t1 * x_norm)
+    x_line = np.linspace(model.min_m, model.max_m, 100)
+    y_line = [model.predict(val) for val in x_line]
     
-    plt.plot(x_range, y_pred, color='red', linewidth=2, label='Model Prediction')
-    plt.xlabel('Mileage (km)')
-    plt.ylabel('Price')
-    plt.title('Regression Result')
-    plt.legend()
+    plt.plot(x_line, y_line, color='red', linewidth=2, label='Model Prediction')
+    plt.xlabel('Mileage (km)'), plt.ylabel('Price'), plt.title('Regression Analysis'), plt.legend()
 
-    # Plot 2: Learning Curve (Cost over Epochs)
+    # Subplot 2: Learning Curve
     plt.subplot(1, 2, 2)
-    # Only plot the first 100 epochs or until it stabilized
     display_limit = min(len(history), 100) 
     plt.plot(history[:display_limit], color='green')
-    plt.xlabel('Epochs (First 100)')
-    plt.ylabel('Cost (MSE)')
-    plt.title('Learning Curve (Cost Reduction)')
+    plt.xlabel('Epochs (Initial Phase)'), plt.ylabel('Cost (MSE)'), plt.title('Learning Curve')
 
     plt.tight_layout()
     print(f"\n{CYAN}📈 Displaying visual results...{RESET}")
     plt.show()
 
 def main():
+    """Main execution pipeline."""
     args = parse_arguments()
+    model = TinyLinearRegression()
     
-    # 0. Output Path Setup
-    model_name = os.path.splitext(os.path.basename(args.filename))[0]
-    output_path = os.path.join(MODEL_DIR, f"{model_name}.json")
-    if not os.path.exists(MODEL_DIR): os.makedirs(MODEL_DIR)
-
-    # 1. Data Pipeline (Loading -> Cleaning -> Normalizing)
+    # 1. Data Loading
     raw_x, raw_y = load_csv(DATA_DIR, args.filename)
     if raw_x is None: return
 
+    # 2. Preprocessing
     if args.clean:
-        print(f"{CYAN}🔍 Analyzing dataset for outliers...{RESET}")
+        print(f"{CYAN}🔍 Scrubbing data for outliers...{RESET}")
         raw_x, raw_y = remove_outliers(raw_x, raw_y)
 
-    norm_x, min_m, max_m = normalize_features(raw_x)
+    norm_x, model.min_m, model.max_m = normalize_features(raw_x)
 
-    # 2. Train
+    # 3. Training (Using the Class method)
     print(f"🚀 Training on '{args.filename}' (LR: {args.lr}, Epochs: {args.epochs})")
-    t0, t1, history = train_model(norm_x, raw_y, args.lr, args.epochs)
+    history = model.fit(norm_x, raw_y, args.lr, args.epochs, TOLERANCE)
 
-    # 3. Evaluate
-    preds = t0 + (t1 * norm_x)
-    metrics = calculate_metrics(raw_y, preds)
+    # 4. Evaluation
+    preds = np.array([model.predict(x, verbose=False) for x in raw_x])
+    model.metrics = calculate_metrics(raw_y, preds)
     
-    print(f"\n{BOLD}📊 Results:{RESET} R²={metrics['r2_score']:.4f}, MAE={metrics['mae']:.2f}")
+    print(f"\n{BOLD}📊 Results:{RESET} R²={model.metrics['r2_score']:.4f}, MAE={model.metrics['mae']:.2f}")
 
-    # 4. Save & Visualize
-    model_params = {
-        "theta0": float(t0), "theta1": float(t1),
-        "min_m": float(min_m), "max_m": float(max_m),
-        "metrics": metrics
-    }
+    # 5. Validation & Persistence
+    out_file = os.path.join(MODEL_DIR, f"{os.path.splitext(args.filename)[0]}.json")
+    if not os.path.exists(MODEL_DIR): os.makedirs(MODEL_DIR)
     
-    # Using the existing validate_and_save and show_plots logic (omitted for brevity)
-    if validate_and_save(model_params, output_path):
-        show_plots(raw_x, raw_y, t0, t1, history, min_m, max_m)
+    if validate_and_save(model, out_file):
+        show_results(raw_x, raw_y, model, history)
 
 if __name__ == "__main__":
     main()

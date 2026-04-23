@@ -1,7 +1,7 @@
 import numpy as np
 import os
 import argparse
-from typing import Tuple, Dict
+from typing import Tuple
 
 # Color constants for consistent logging
 CYAN = "\033[96m"

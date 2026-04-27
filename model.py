@@ -54,16 +54,18 @@ class TinyLinearRegression:
             if epoch % 100 == 0:
                 print(f"Epoch {epoch:4d}: Cost = {cost:.2f}")
         
+        denom = self.max_m - self.min_m
+        if denom != 0:
+            self.theta0 = self.theta0 - (self.theta1 * (self.min_m / denom))
+            self.theta1 = self.theta1 / denom
+        
         return cost_history
 
     def predict(self, mileage: float, verbose: bool = False) -> float:
         """Calculates the predicted price for a single mileage value."""
         # Normalize input based on trained scale
-        denom = self.max_m - self.min_m
-        x_norm = (mileage - self.min_m) / denom if denom != 0 else 0.0
+        prediction = self.theta0 + (self.theta1 * mileage)
         
-        # Linear Formula: y = t0 + t1 * x
-        prediction = self.theta0 + (self.theta1 * x_norm)
         if verbose and prediction < 0:
             print(f"⚠️  Note: The input mileage is far beyond the training data range.")
             print(f"The calculated value was negative ({prediction:.2f}), so the price is estimated as 0.")

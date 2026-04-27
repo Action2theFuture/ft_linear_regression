@@ -7,7 +7,7 @@ from typing import Tuple, List, Dict
 
 # Modular imports
 from model import TinyLinearRegression
-from preprocessing import csv_file_validator, load_csv, remove_outliers, normalize_features
+from preprocessing import csv_file_validator, load_csv, normalize_features
 
 # --- UI & Configuration ---
 DATA_DIR = "data"
@@ -29,7 +29,6 @@ HELP_DESC = f"{BOLD}{CYAN}🚀 Linear Regression Training Tool for car price pre
 HELP_EPILOG = textwrap.dedent(f"""
     {BOLD}{YELLOW}[ 💡 Training Guide ]{RESET}
     - {BOLD}Learning Rate (--lr):{RESET} Standard default is 0.1.
-    - {BOLD}Data Cleaning (--clean):{RESET} Removes outliers using IQR (1.5x).
     - {BOLD}Early Stopping:{RESET} Automatically halts when cost stabilizes below {TOLERANCE}.
     """)
 
@@ -43,7 +42,6 @@ def parse_arguments():
     parser.add_argument("filename", type=csv_file_validator, help="Target CSV file name")
     parser.add_argument("--lr", type=float, default=DEFAULT_LR, help="Learning rate")
     parser.add_argument("--epochs", type=int, default=DEFAULT_EPOCHS, help="Max iterations")
-    parser.add_argument("--clean", action="store_true", help="Enable outlier removal")
     return parser.parse_args()
 
 def calculate_metrics(y_true: np.ndarray, y_pred: np.ndarray) -> Dict[str, float]:
@@ -112,24 +110,19 @@ def main():
     raw_x, raw_y = load_csv(DATA_DIR, args.filename)
     if raw_x is None: return
 
-    # 2. Preprocessing
-    if args.clean:
-        print(f"{CYAN}🔍 Scrubbing data for outliers...{RESET}")
-        raw_x, raw_y = remove_outliers(raw_x, raw_y)
-
     norm_x, model.min_m, model.max_m = normalize_features(raw_x)
 
-    # 3. Training (Using the Class method)
+    # 2 Training (Using the Class method)
     print(f"🚀 Training on '{args.filename}' (LR: {args.lr}, Epochs: {args.epochs})")
     history = model.fit(norm_x, raw_y, args.lr, args.epochs, TOLERANCE)
 
-    # 4. Evaluation
+    # 3 Evaluation
     preds = np.array([model.predict(x, verbose=False) for x in raw_x])
     model.metrics = calculate_metrics(raw_y, preds)
     
     print(f"\n{BOLD}📊 Results:{RESET} R²={model.metrics['r2_score']:.4f}, MAE={model.metrics['mae']:.2f}")
 
-    # 5. Validation & Persistence
+    # 4 Validation & Persistence
     out_file = os.path.join(MODEL_DIR, f"{os.path.splitext(args.filename)[0]}.json")
     if not os.path.exists(MODEL_DIR): os.makedirs(MODEL_DIR)
     

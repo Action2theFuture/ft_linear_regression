@@ -34,23 +34,6 @@ def load_csv(directory: str, filename: str) -> Tuple[np.ndarray, np.ndarray]:
         print(f"{RED}❌ Error: Failed to read file ({e}){RESET}")
         return None, None
 
-def remove_outliers(x: np.ndarray, y: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
-    """Detects and removes outliers using the IQR method (1.5x)."""
-    def get_mask(data):
-        q1, q3 = np.percentile(data, [25, 75])
-        iqr = q3 - q1
-        return (data >= q1 - 1.5 * iqr) & (data <= q3 + 1.5 * iqr)
-
-    mask = get_mask(x) & get_mask(y)
-    outlier_count = len(x) - np.sum(mask)
-    
-    if outlier_count > 0:
-        print(f"{YELLOW}🧹 Removed {outlier_count} outliers from the dataset.{RESET}")
-    else:
-        print(f"{GREEN}✨ No significant outliers detected.{RESET}")
-        
-    return x[mask], y[mask]
-
 def normalize_features(x: np.ndarray) -> Tuple[np.ndarray, float, float]:
     """Performs Min-Max Scaling and returns normalized data with scaling info."""
     min_val = np.min(x)

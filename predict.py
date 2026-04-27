@@ -1,4 +1,3 @@
-from numpy.testing import verbose
 import argparse
 from model import TinyLinearRegression
 
